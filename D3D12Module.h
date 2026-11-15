@@ -16,10 +16,14 @@ public:
 
 	// Commands
 	void resetCommands(void);
+	void submitCommands(void);
 
 	// Transition barrier
 	void barrierTransitionToRenderTarget(UINT backBufferIndex);
 	void barrierTransitionToPresent(UINT backBufferIndex);
+
+	// Screen
+	void clearScreen(const CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle);
 
 	// ImGui
 	void renderImGui(CD3DX12_CPU_DESCRIPTOR_HANDLE *rtvHandle);

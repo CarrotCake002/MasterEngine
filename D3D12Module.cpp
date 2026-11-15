@@ -125,6 +125,13 @@ void D3D12Module::barrierTransitionToPresent(UINT backBufferIndex) {
 	commandList->ResourceBarrier(1, &presentBarrier);
 }
 
+void D3D12Module::submitCommands(void) {
+	commandList->Close();
+	ID3D12CommandList* lists[] = { commandList.Get() };
+	commandQueue->ExecuteCommandLists(1, lists);
+	swapChain->Present(1, 0);
+}
+
 void D3D12Module::renderImGui(CD3DX12_CPU_DESCRIPTOR_HANDLE* rtvHandle) {
 	// Set render target for imgui
 	commandList->OMSetRenderTargets(1, rtvHandle, false, nullptr);
@@ -133,42 +140,9 @@ void D3D12Module::renderImGui(CD3DX12_CPU_DESCRIPTOR_HANDLE* rtvHandle) {
 	imgui->record(commandList.Get());
 }
 
-// USE PRE-RENDER AND POST-RENDER
-void D3D12Module::render() {
-	imgui->startFrame();
-
-	// Reset command allocator and list
-	resetCommands();
-
-	/* NEW COMMANDS */
-	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
-	UINT rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
+void D3D12Module::clearScreen(const CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle) {
 	const FLOAT color[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
-	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
-		descriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		backBufferIndex,
-		rtvDescriptorSize
-	);
-
-	// Transition barrier
-	barrierTransitionToRenderTarget(backBufferIndex);
-
-	// Clear screen
 	commandList->ClearRenderTargetView(rtvHandle, color, 0, nullptr);
-
-	renderImGui(&rtvHandle);
-
-	// Second Barrier
-	barrierTransitionToPresent(backBufferIndex);
-
-	// Submit commands
-	commandList->Close();
-	ID3D12CommandList* lists[] = { commandList.Get() };
-	commandQueue->ExecuteCommandLists(1, lists);
-	swapChain->Present(1, 0);
-
-	WaitForGPU();
 }
 
 void D3D12Module::WaitForGPU(void) {
@@ -179,6 +153,32 @@ void D3D12Module::WaitForGPU(void) {
 		fence->SetEventOnCompletion(fenceValue, fenceEvent);
 		WaitForSingleObject(fenceEvent, INFINITE);
 	}
+}
+
+// USE PRE-RENDER AND POST-RENDER
+void D3D12Module::render() {
+	/* NEW COMMANDS */
+	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
+	UINT rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
+		descriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+		backBufferIndex,
+		rtvDescriptorSize
+	);
+
+	imgui->startFrame();
+	resetCommands();
+	barrierTransitionToRenderTarget(backBufferIndex);
+
+	// Draw
+	clearScreen(rtvHandle);
+	renderImGui(&rtvHandle);
+
+	barrierTransitionToPresent(backBufferIndex);
+	submitCommands();
+
+	WaitForGPU();
 }
 
 bool D3D12Module::cleanUp()
