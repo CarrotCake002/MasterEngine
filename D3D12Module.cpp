@@ -26,10 +26,12 @@ bool D3D12Module::init()
 #endif
 
 	// command list for GPU
-	device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator));
-	device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&commandList));
-	commandList->Reset(commandAllocator.Get(), nullptr); // resets the connection to commandAllocator and writes on previous data
-	commandList->Close();
+	for (int i = 0; i < BUFFER_COUNT; ++i) {
+		device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator[i]));
+		device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&commandList));
+		commandList->Reset(commandAllocator[i].Get(), nullptr); // resets the connection to commandAllocator and writes on previous data
+		commandList->Close();
+	}
 
     // command queue
 	D3D12_COMMAND_QUEUE_DESC cmdQueueDesc = {};
@@ -46,25 +48,17 @@ bool D3D12Module::init()
 
 	// init swap chain
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-	swapChainDesc.Width = windowWidth;	// Width of the back buffer in pixels
-	swapChainDesc.Height = windowHeight;// Height of the back buffer in pixels
-	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // 32-bit RGBA format (8 bits per channel), UNORM = Unsigned normalized integer (0-255 mapped to 0.0-1.0)
-
-	swapChainDesc.Stereo = FALSE;	// Set to TRUE for stereoscopic 3D rendering (VR/3D Vision)
-	swapChainDesc.SampleDesc = { 1, 0 }; // Multisampling { Count, Quality } // Count=1: No multisampling (1 sample per pixel)
-	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; // This buffer will be used as a render target
-	swapChainDesc.BufferCount = 2;	// Double buffering:
-									// - 1 front buffer (displayed)
-									// - 1 back buffer (rendering)
-	swapChainDesc.Scaling = DXGI_SCALING_STRETCH;	// How to scale when window size doesn't match buffer size:
-													// STRETCH = Stretch the image to fit the window
-	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;	// Modern efficient swap method:
-																// - FLIP: Uses page flipping (no copying)
-																// - DISCARD: Discard previous back buffer contents
-	swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED; // Alpha channel behavior for window blending UNSPECIFIED = Use default behavior
-	swapChainDesc.Flags = 0;	// Additional swap chain options: 0 = No special flags
-								// DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH: Allow full-screen mode switches
-								// DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING: Allow tearing in windowed mode (VSync off)
+	swapChainDesc.Width = windowWidth;
+	swapChainDesc.Height = windowHeight;
+	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	swapChainDesc.Stereo = FALSE;
+	swapChainDesc.SampleDesc = { 1, 0 };
+	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	swapChainDesc.BufferCount = BUFFER_COUNT;
+	swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
+	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+	swapChainDesc.Flags = 0;
 
 	ComPtr<IDXGISwapChain1> swapChain1;
 	factory->CreateSwapChainForHwnd(commandQueue.Get(), hWnd, &swapChainDesc, nullptr, nullptr, &swapChain1);
@@ -73,16 +67,16 @@ bool D3D12Module::init()
 	// Descriptor Heap
 	D3D12_DESCRIPTOR_HEAP_DESC descriptorHeapDesc = {};
 	descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-	descriptorHeapDesc.NumDescriptors = 2;
+	descriptorHeapDesc.NumDescriptors = BUFFER_COUNT;
 	descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
 	device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&descriptorHeap));
 
-	// rtHandle
+	// rtvHandle
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(descriptorHeap->GetCPUDescriptorHandleForHeapStart());
 	UINT rtvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-	for (int i = 0; i < swapChainDesc.BufferCount; i++) {
+	for (int i = 0; i < BUFFER_COUNT; i++) {
 		swapChain->GetBuffer(i, IID_PPV_ARGS(&buffers[i]));
 		device->CreateRenderTargetView(buffers[i].Get(), nullptr, rtvHandle);
 		rtvHandle.Offset(1, rtvSize);
@@ -98,17 +92,24 @@ bool D3D12Module::init()
 }
 
 void D3D12Module::update() {
+	bufferIndex = swapChain->GetCurrentBackBufferIndex();
+	rtvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
+	rtvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+		descriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+		bufferIndex,
+		rtvSize
+	);
 }
 
 void D3D12Module::resetCommands(void) {
-	commandAllocator->Reset();
-	commandList->Reset(commandAllocator.Get(), nullptr);
+	commandAllocator[bufferIndex]->Reset();
+	commandList->Reset(commandAllocator[bufferIndex].Get(), nullptr);
 }
 
-void D3D12Module::barrierTransitionToRenderTarget(UINT backBufferIndex) {
+void D3D12Module::barrierTransitionToRenderTarget() {
 	CD3DX12_RESOURCE_BARRIER renderTargetBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
-		buffers[backBufferIndex].Get(),
+		buffers[bufferIndex].Get(),
 		D3D12_RESOURCE_STATE_PRESENT,
 		D3D12_RESOURCE_STATE_RENDER_TARGET
 	);
@@ -116,9 +117,9 @@ void D3D12Module::barrierTransitionToRenderTarget(UINT backBufferIndex) {
 	commandList->ResourceBarrier(1, &renderTargetBarrier);
 }
 
-void D3D12Module::barrierTransitionToPresent(UINT backBufferIndex) {
+void D3D12Module::barrierTransitionToPresent() {
 	CD3DX12_RESOURCE_BARRIER presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
-		buffers[backBufferIndex].Get(),
+		buffers[bufferIndex].Get(),
 		D3D12_RESOURCE_STATE_RENDER_TARGET,
 		D3D12_RESOURCE_STATE_PRESENT
 	);
@@ -132,53 +133,59 @@ void D3D12Module::submitCommands(void) {
 	swapChain->Present(1, 0);
 }
 
-void D3D12Module::renderImGui(CD3DX12_CPU_DESCRIPTOR_HANDLE* rtvHandle) {
+void D3D12Module::renderImGui(void) {
 	// Set render target for imgui
-	commandList->OMSetRenderTargets(1, rtvHandle, false, nullptr);
+	commandList->OMSetRenderTargets(1, &rtvHandle, false, nullptr);
 
 	ImGui::ShowDemoWindow();
 	imgui->record(commandList.Get());
 }
 
-void D3D12Module::clearScreen(const CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle) {
+void D3D12Module::clearScreen(void) {
 	const FLOAT color[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
 	commandList->ClearRenderTargetView(rtvHandle, color, 0, nullptr);
 }
 
-void D3D12Module::WaitForGPU(void) {
-	fenceValue++;
-	commandQueue->Signal(fence.Get(), fenceValue);
+// USE PRE-RENDER AND POST-RENDER
+void D3D12Module::render() {
+	imgui->startFrame();
+	resetCommands();
+	barrierTransitionToRenderTarget();
 
-	if (fence->GetCompletedValue() < fenceValue) {
-		fence->SetEventOnCompletion(fenceValue, fenceEvent);
+	// Draw
+	clearScreen();
+	renderImGui();
+
+	barrierTransitionToPresent();
+	submitCommands();
+	
+}
+
+void D3D12Module::WaitForGPU(void) {
+	currFenceValue++;
+	commandQueue->Signal(fence.Get(), currFenceValue);
+
+	if (fence->GetCompletedValue() < currFenceValue) {
+		fence->SetEventOnCompletion(currFenceValue, fenceEvent);
 		WaitForSingleObject(fenceEvent, INFINITE);
 	}
 }
 
-// USE PRE-RENDER AND POST-RENDER
-void D3D12Module::render() {
-	/* NEW COMMANDS */
-	UINT backBufferIndex = swapChain->GetCurrentBackBufferIndex();
-	UINT rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+void D3D12Module::WaitForFence(void) {
+	if (fence->GetCompletedValue() < fenceValues[bufferIndex]) {
+		fence->SetEventOnCompletion(fenceValues[bufferIndex], fenceEvent);
+		WaitForSingleObject(fenceEvent, INFINITE);
+	}
+}
 
-	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
-		descriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		backBufferIndex,
-		rtvDescriptorSize
-	);
+void D3D12Module::preRender(void) {
+	WaitForFence(); // SetEventOnCompletion + WaitForSingleObject
+	commandAllocator[bufferIndex]->Reset();
+}
 
-	imgui->startFrame();
-	resetCommands();
-	barrierTransitionToRenderTarget(backBufferIndex);
-
-	// Draw
-	clearScreen(rtvHandle);
-	renderImGui(&rtvHandle);
-
-	barrierTransitionToPresent(backBufferIndex);
-	submitCommands();
-
-	WaitForGPU();
+void D3D12Module::postRender(void) {
+	commandQueue->Signal(fence.Get(), ++currFenceValue);
+	fenceValues[bufferIndex] = currFenceValue; // Store the fence for this buffer
 }
 
 bool D3D12Module::cleanUp()
