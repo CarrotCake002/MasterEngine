@@ -4,6 +4,11 @@
 #include "ImGuiPass.h"
 
 #define BUFFER_COUNT 2
+#define VERTEX_SIZE 3
+
+struct Vertex {
+	float x, y, z;
+};
 
 class D3D12Module : public Module
 {
@@ -51,6 +56,8 @@ private:
 	ComPtr<IDXGISwapChain4> swapChain;
 	ComPtr<ID3D12DescriptorHeap> descriptorHeap;
 	ComPtr<ID3D12Resource> buffers[BUFFER_COUNT];
+	ComPtr<ID3D12Resource> vertexBuffer = nullptr;
+	ComPtr<ID3D12Resource> stagingBuffer = nullptr;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle;
 	UINT bufferIndex;
@@ -66,6 +73,12 @@ private:
 	std::unique_ptr <ImGuiPass> imgui;
 
 	HWND hWnd;
+
+	Vertex vertices[VERTEX_SIZE] = {
+		{ 0.0f, 0.5f, 0.0f },
+		{ 0.5f, -0.5f, 0.0f },
+		{ -0.5f, -0.5f, 0.0f },
+	};
 
 #if defined(_DEBUG)
 	ComPtr<ID3D12Debug> debugInterface;

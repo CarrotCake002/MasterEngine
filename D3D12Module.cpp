@@ -28,10 +28,8 @@ bool D3D12Module::init()
 	// command list for GPU
 	for (int i = 0; i < BUFFER_COUNT; ++i) {
 		device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator[i]));
-		device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&commandList));
-		commandList->Reset(commandAllocator[i].Get(), nullptr); // resets the connection to commandAllocator and writes on previous data
-		commandList->Close();
 	}
+	device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(&commandList));
 
     // command queue
 	D3D12_COMMAND_QUEUE_DESC cmdQueueDesc = {};
@@ -82,12 +80,36 @@ bool D3D12Module::init()
 		rtvHandle.Offset(1, rtvSize);
 	}
 
-	// Fence creation
+	/* FENCE CREATION */
 	device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
 	fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	
+	commandList->Reset(commandAllocator[0].Get(), nullptr);
+
+	/* RESOURCE CREATION */ // PENDING TO MOVE INTO A CREATE_UPLOAD_BUFFER() FUNCTION
+	UINT bufferSize = VERTEX_SIZE * sizeof(Vertex);
+	auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+	auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(bufferSize);
+	device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&vertexBuffer));
+	
+	auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+	device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&stagingBuffer));
+
+	BYTE* pData = nullptr;
+	CD3DX12_RANGE readRange(0, 0);
+	stagingBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pData));
+
+	memcpy(pData, &vertices, bufferSize);
+	stagingBuffer->Unmap(0, nullptr);
+
+	commandList->CopyResource(vertexBuffer.Get(), stagingBuffer.Get());
+	commandList->Close();
+	
 	/* IMGUI INIT */
 	imgui = std::make_unique<ImGuiPass>(device.Get(), hWnd);
+	ID3D12CommandList* lists[] = { commandList.Get() };
+	commandQueue->ExecuteCommandLists(1, lists);
+	WaitForGPU();
 	return true;
 }
 
@@ -146,6 +168,17 @@ void D3D12Module::clearScreen(void) {
 	commandList->ClearRenderTargetView(rtvHandle, color, 0, nullptr);
 }
 
+void D3D12Module::preRender(void) {
+	WaitForFence(); // SetEventOnCompletion + WaitForSingleObject
+	commandAllocator[bufferIndex]->Reset();
+}
+
+void D3D12Module::postRender(void) {
+	commandQueue->Signal(fence.Get(), ++currFenceValue);
+	fenceValues[bufferIndex] = currFenceValue; // Store the fence for this buffer
+}
+
+
 // USE PRE-RENDER AND POST-RENDER
 void D3D12Module::render() {
 	imgui->startFrame();
@@ -176,16 +209,6 @@ void D3D12Module::WaitForFence(void) {
 		fence->SetEventOnCompletion(fenceValues[bufferIndex], fenceEvent);
 		WaitForSingleObject(fenceEvent, INFINITE);
 	}
-}
-
-void D3D12Module::preRender(void) {
-	WaitForFence(); // SetEventOnCompletion + WaitForSingleObject
-	commandAllocator[bufferIndex]->Reset();
-}
-
-void D3D12Module::postRender(void) {
-	commandQueue->Signal(fence.Get(), ++currFenceValue);
-	fenceValues[bufferIndex] = currFenceValue; // Store the fence for this buffer
 }
 
 bool D3D12Module::cleanUp()
