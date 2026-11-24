@@ -88,23 +88,10 @@ bool D3D12Module::init()
 
 	/* RESOURCE CREATION */ // PENDING TO MOVE INTO A CREATE_UPLOAD_BUFFER() FUNCTION
 	UINT bufferSize = VERTEX_SIZE * sizeof(Vertex);
-	auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-	auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(bufferSize);
-	device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&vertexBuffer));
+	CreateUploadBuffer(vertices, bufferSize);
 	
-	auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&stagingBuffer));
-
-	BYTE* pData = nullptr;
-	CD3DX12_RANGE readRange(0, 0);
-	stagingBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pData));
-
-	memcpy(pData, &vertices, bufferSize);
-	stagingBuffer->Unmap(0, nullptr);
-
-	commandList->CopyResource(vertexBuffer.Get(), stagingBuffer.Get());
 	commandList->Close();
-	
+
 	/* IMGUI INIT */
 	imgui = std::make_unique<ImGuiPass>(device.Get(), hWnd);
 	ID3D12CommandList* lists[] = { commandList.Get() };
@@ -178,8 +165,6 @@ void D3D12Module::postRender(void) {
 	fenceValues[bufferIndex] = currFenceValue; // Store the fence for this buffer
 }
 
-
-// USE PRE-RENDER AND POST-RENDER
 void D3D12Module::render() {
 	imgui->startFrame();
 	resetCommands();
@@ -216,4 +201,31 @@ bool D3D12Module::cleanUp()
 	WaitForGPU();
 	CloseHandle(fenceEvent);
 	return true;
+}
+
+void D3D12Module::CreateUploadBuffer(void* src, UINT size) {
+	ComPtr<ID3D12Resource> gpuBuffer;
+	auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+	auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(size);
+
+	device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&gpuBuffer));
+
+	auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+	device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&stagingBuffer));
+
+	BYTE* pData = nullptr;
+	CD3DX12_RANGE readRange(0, 0);
+	stagingBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pData));
+
+	memcpy(pData, src, size);
+	stagingBuffer->Unmap(0, nullptr);
+
+	commandList->CopyResource(gpuBuffer.Get(), stagingBuffer.Get());
+
+	gpuBuffers.push_back(gpuBuffer);
+
+	auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(gpuBuffer.Get(),
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+	commandList->ResourceBarrier(1, &barrier);
 }

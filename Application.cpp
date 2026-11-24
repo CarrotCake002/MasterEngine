@@ -6,6 +6,9 @@
 
 Application::Application(int argc, wchar_t** argv, void* hWnd)
 {
+    //D3D12Module *d3d12module = ;
+
+
     modules.push_back(new D3D12Module((HWND)hWnd));
     modules.push_back(new ModuleInput((HWND)hWnd));
 }

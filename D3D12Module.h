@@ -40,6 +40,14 @@ public:
 	// Sync
 	void WaitForFence(void);
 	void WaitForGPU(void);
+
+	// Buffers
+	void CreateUploadBuffer(void* src, UINT size);
+
+	// Getters
+	void GetCommandQueue(ComPtr<ID3D12CommandQueue> commandQueue) const { commandQueue = this->commandQueue; };
+	void GetCommandList(ComPtr<ID3D12GraphicsCommandList1> commandList) const { commandList = this->commandList; };
+
 private:
 	// Device
 	ComPtr<IDXGIFactory7> factory;
@@ -58,6 +66,7 @@ private:
 	ComPtr<ID3D12Resource> buffers[BUFFER_COUNT];
 	ComPtr<ID3D12Resource> vertexBuffer = nullptr;
 	ComPtr<ID3D12Resource> stagingBuffer = nullptr;
+	std::vector<ComPtr<ID3D12Resource>> gpuBuffers;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle;
 	UINT bufferIndex;
